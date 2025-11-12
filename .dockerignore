@@ -1,0 +1,15 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.mp4
+# Sample models/videos not needed in image
+PPE-yolov8s.pt
+yolov8n.pt
+# local venv path
+path/
+  to/
+    venv/

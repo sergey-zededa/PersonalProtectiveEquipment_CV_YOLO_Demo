@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZEDEDA Edge AI – Real‑time Object Classification</title>
+  <!-- Brand font from zededa.com (Open Sans) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --zededa-orange: #ff5000; /* primary brand */
+      --zededa-teal: #68aec7;   /* accent from site */
+      --ink: #1f1f1f;
+      --muted: #6d6d6d;
+      --bg: #ffffff;
+      /* corner tones (solid, no gradients) */
+      --teal-1: #6edad5;
+      --teal-2: #bfeee8;
+      --orange-1: #ff5000;
+      --orange-2: #fecda5;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    /* Header */
+    header { border-bottom: 1px solid #eee; position: relative; z-index: 1; /* transparent so corners show below */ }
+    main { position: relative; z-index: 1; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 16px 20px; }
+    .brand-row { display: flex; align-items: center; gap: 16px; }
+    .brand-row img { height: 36px; width: auto; }
+    .title { margin-left: auto; text-align: center; flex: 1; }
+    .title .l1, .title .l2 { color: var(--zededa-orange); font-weight: 800; line-height: 1.1; }
+    .title .l1 { font-size: 28px; }
+    .title .l2 { font-size: 24px; }
+
+    /* Layout */
+    main .container { display: grid; grid-template-columns: 280px 1fr; gap: 24px; padding-top: 18px; }
+    @media (max-width: 980px) { main .container { grid-template-columns: 1fr; } .title { display:none; } }
+
+    /* Left controls */
+    .panel h3 { margin: 0 0 6px; color: var(--zededa-orange); font-size: 16px; font-weight: 800; }
+    .panel select { width: 200px; padding: 6px 8px; font-size: 14px; }
+
+    .stats h2 { margin: 18px 0 6px; color: var(--zededa-orange); font-size: 22px; font-weight: 800; }
+    .objects { list-style: none; padding: 0; margin: 8px 0 0; font-size: 18px; }
+    .objects li { margin: 6px 0; }
+    .objects .count { font-weight: 800; margin-left: 6px; }
+    .meta { margin-top: 10px; color: var(--muted); font-size: 13px; }
+    .meta .label { color: #444; font-weight: 600; }
+
+    /* Video */
+    .frame { position: relative; background: #000; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 18px rgba(0,0,0,.15); max-width: 980px; }
+    .frame img { display: block; width: 100%; height: auto; }
+    .wm { position: absolute; top: 12px; right: 14px; color: #fff; font-weight: 800; letter-spacing: 2px; opacity: .9; }
+
+    /* Decorative two‑tone triangle corners (solid colors) placed below header */
+    .corner-band { position: relative; width: 100%; height: 250px; overflow: hidden; pointer-events: none; }
+    .corner-band .corner { position: absolute; top: 0; height: 250px; width: 100px;}
+
+    /* Ensure darker wedges sit above lighter ones */
+    .corner-band .left.primary, .corner-band .right.primary { z-index: 2; }
+    .corner-band .left.secondary, .corner-band .right.secondary { z-index: 1; }
+
+    /* Use the same slope for both tones so edges align */
+    :root { --corner-left-y: 50%; --corner-right-y: 50%; }
+
+    /* Left (teal) */
+    .corner-band .left.primary { left: 0; height: 80%; width: 20%; background-color: var(--teal-1); clip-path: polygon(0 0, 100% 0, 0 100%); }
+    .corner-band .left.secondary { left: 0; height: 100%; width: 25%; background-color: var(--teal-2); clip-path: polygon(0 0, 100% 0, 0 100%); }
+
+    /* Right (orange) */
+    .corner-band .right.primary { right: 0; height: 80%; width: 20%; background-color: var(--orange-1); clip-path: polygon(0 0, 100% 0, 100% 100%); }
+    .corner-band .right.secondary { right: 0; height: 100%; width: 25%; background-color: var(--orange-2); clip-path: polygon(0 0, 100% 0, 100% 100%); }
+
+    @media (max-width: 980px) {
+      .corner-band { height: 110px; }
+      .corner-band .corner { height: 110px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container brand-row">
+      <img src="https://zededa.com/wp-content/uploads/2023/09/zededa-logo001.png" alt="ZEDEDA logo" />
+      <div class="title">
+        <div class="l1">ZEDEDA Edge‑AI Use‑Case</div>
+        <div class="l2">Real‑time Object Classification</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Decorative corners below header -->
+  <div class="corner-band" aria-hidden="true" style="position: absolute; top: 0; left: 0; width: 100vw; height: 250px; z-index: 0;">
+    <div class="corner left primary"></div>
+    <div class="corner left secondary"></div>
+    <div class="corner right primary"></div>
+    <div class="corner right secondary"></div>
+  </div>
+
+  <main style="position: relative; z-index: 2;">
+    <div class="container">
+      <aside class="panel">
+        <h3>Select a Video:</h3>
+        <select aria-label="Select a video source">
+          <option>Camera 1</option>
+          <option selected>Camera 2</option>
+          <option>Camera 3</option>
+        </select>
+
+        <section class="stats">
+          <h2>Statistics for Identified Objects</h2>
+          <ul id="objectCounts" class="objects"></ul>
+          <div class="meta">
+            <div><span class="label">FPS:</span> <span id="fps">--</span></div>
+            <div><span class="label">Last Detection:</span> <span id="last_detection_time">--</span></div>
+          </div>
+        </section>
+      </aside>
+
+      <section>
+        <div class="frame">
+          <img id="stream" src="{{ url_for('video_feed') }}" alt="Realtime object detection stream" />
+          <div class="wm">CCTV</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    function updateStats() {
+      fetch('/stats')
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('fps').textContent = (data.fps || 0).toFixed(2);
+          document.getElementById('last_detection_time').textContent = data.last_detection_time || '--';
+
+          const list = document.getElementById('objectCounts');
+          list.innerHTML = '';
+          const entries = Object.entries(data.detections_per_class || {});
+          if (entries.length === 0) {
+            const li = document.createElement('li'); li.textContent = 'No detections'; li.style.color = '#888'; list.appendChild(li);
+          } else {
+            for (const [label, count] of entries) {
+              const li = document.createElement('li');
+              li.innerHTML = `<span class="name">${label}:</span> <span class="count">${count}</span>`;
+              list.appendChild(li);
+            }
+          }
+        })
+        .catch(()=>{});
+    }
+    updateStats();
+    setInterval(updateStats, 1000);
+  </script>
+</body>
+</html>
