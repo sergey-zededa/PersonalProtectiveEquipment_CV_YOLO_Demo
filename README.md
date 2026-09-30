@@ -1,134 +1,120 @@
 # PPE Object Detection Web App
 
-A lightweight Flask web app that runs Ultralytics YOLO on a live video source and serves:
-- A branded UI at `/` that shows the annotated MJPEG stream and live stats
+A Flask web app that runs a YOLO11 PPE model (gloves, hardhat, safety glasses, vest) on a video
+source and serves:
+- A ZEDEDA-branded UI at `/` with the annotated stream, live counts and a source switcher
 - An MJPEG stream at `/video_feed`
 - JSON stats at `/stats`
+- Source control at `POST /api/source` with `{"mode": "auto|stream|usb|local"}`
 
-The UI styling matches ZEDEDA’s two‑tone corner motif.
+Built for the SMAGIC'26 demo on an OnLogic CL260 running EVE-OS: the same app shows a cloud-hosted
+pre-recorded stream while the node is online, and keeps detecting from a locally attached USB
+camera (or on-node video files) when the uplink is cut. See `docs/SMAGIC26-demo.md` for the runbook.
 
 
-## Requirements
-- A camera/video stream URL the app can read (HLS `.m3u8`, MP4 `.mp4`, or other sources OpenCV + FFmpeg can decode)
-- A YOLO model file (default is the included `bestn.pt`). You can override this via `MODEL_PATH`.
+## Video sources
+
+| Mode     | What it plays                                                        |
+|----------|----------------------------------------------------------------------|
+| `stream` | `CAMERA_STREAM_URL` (HLS `.m3u8`, MP4, RTSP; anything OpenCV+FFmpeg opens) |
+| `usb`    | USB camera: `/dev/video*` if present, otherwise userspace UVC via libuvc |
+| `local`  | `*.mp4` files in `LOCAL_VIDEO_DIR` (the image bundles `sample-videos/*.mp4`) |
+| `auto`   | `stream` while the uplink is reachable, else `usb` if a camera is attached, else `local` |
+
+Auto mode probes the stream URL every few seconds (two misses to go offline, two hits to come
+back), so cutting and restoring the uplink switches sources on its own. Switch manually from the UI
+or with `curl -X POST -H 'Content-Type: application/json' -d '{"mode":"usb"}' http://<host>:8000/api/source`.
+
+**Why libuvc:** EVE-OS runs container apps inside a small VM that boots the EVE kernel, which has
+no `uvcvideo` driver, so a passed-through USB camera never appears as `/dev/video0`. The app reads
+the camera directly over libusb instead (`uvc_capture.py`), which needs no kernel driver.
+
+**Pass the USB controller, not the port.** Per-port assignment (`IO_TYPE_USB_DEVICE`) goes through
+QEMU's emulated xHCI, which breaks the camera's isochronous transfers (frames never arrive). Assign
+the whole controller (`IO_TYPE_USB_CONTROLLER`, `USB1` on the CL260) so the VM drives the real
+hardware.
 
 
 ## Quick start (Docker)
 
-Build the image:
-
-```bash path=null start=null
+```bash
 docker build -t ppe-stream .
-```
-
-Run with your camera URL (port 5000 by default):
-
-```bash path=null start=null
-docker run --rm \
-  -p 5000:5000 \
-  -e CAMERA_STREAM_URL="http://your-device-or-server/playlist.m3u8" \
+docker run --rm -p 8000:8000 \
+  -e CAMERA_STREAM_URL="http://your-server/playlist.m3u8" \
   ppe-stream
 ```
 
-Open http://localhost:5000
+Open http://localhost:8000
+
+For the CL260 (amd64) from an Apple Silicon Mac:
+
+```bash
+docker buildx build --platform linux/amd64 -t sergeyzededa/zdemo:6 --push .
+```
+
+The build exports the model to OpenVINO IR in a separate stage (runs natively on the build
+machine; the IR is architecture-independent). OpenVINO is roughly 2 to 3 times faster than PyTorch
+on Intel CPUs.
 
 
 ### Environment variables
-- `CAMERA_STREAM_URL` (string): URL to your video stream (e.g., HLS `.m3u8`, MP4). If empty, the app uses its internal default.
-- `MODEL_PATH` (string, default: `bestn.pt`): Path to a YOLO model inside the container. You can mount your own.
-- `PORT` (int, default: `5000`): HTTP port the Flask app binds to inside the container.
 
-Examples:
-
-Use a custom model that you mount into the container:
-
-```bash path=null start=null
-docker run --rm \
-  -p 5000:5000 \
-  -e CAMERA_STREAM_URL="http://your-device/stream.m3u8" \
-  -e MODEL_PATH="/app/custom.pt" \
-  -v "$PWD/custom.pt:/app/custom.pt:ro" \
-  ppe-stream
-```
-
-Change the listen port:
-
-```bash path=null start=null
-docker run --rm \
-  -e PORT=8080 \
-  -p 8080:8080 \
-  -e CAMERA_STREAM_URL="http://your-device/stream.m3u8" \
-  ppe-stream
-```
+| Variable            | Default                          | Notes |
+|---------------------|----------------------------------|-------|
+| `CAMERA_STREAM_URL` | `https://sspm.freeddns.org/videos/playlist.m3u8` | `off` disables the cloud stream |
+| `SOURCE_MODE`       | `auto`                           | Start-up mode |
+| `USB_CAMERA`        | `auto`                           | `auto`, `uvc`, `off`, `/dev/videoN` or an index |
+| `USB_RESOLUTION`    | `1280x720`                       | MJPEG mode requested from the camera (falls back to 1024x576, 640x480, 640x360) |
+| `USB_FPS`           | `30`                             | |
+| `LOCAL_VIDEO_DIR`   | `videos`                         | |
+| `MODEL_PATH`        | `bestn_openvino_model` if present, else `bestn.pt` | Any Ultralytics-loadable model |
+| `IMGSZ` / `CONF`    | `640` / `0.3`                    | Inference size and confidence threshold |
+| `REALTIME_PLAYBACK` | `1`                              | Skip frames so recorded clips play at natural speed |
+| `DEVICE_LABEL`      | hostname                         | Shown under the page title |
+| `PORT`              | `8000`                           | |
 
 
 ## Local development (without Docker)
 
-Create a virtual environment and install dependencies:
-
-```bash path=null start=null
-python3 -m venv .venv
-source .venv/bin/activate
+```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+CAMERA_STREAM_URL=off LOCAL_VIDEO_DIR=sample-videos MODEL_PATH=bestn.pt python web_yolo.py
 ```
 
-Run the app with your stream URL:
+To fake the cloud stream and test failover, serve the bundled HLS playlist and stop/start it:
 
-```bash path=null start=null
-export CAMERA_STREAM_URL="http://your-device/playlist.m3u8"
-export MODEL_PATH="bestn.pt"   # or path to another model
-export PORT=5000
-python web_yolo.py
+```bash
+(cd sample-videos && python3 -m http.server 8089)
+CAMERA_STREAM_URL=http://localhost:8089/playlist.m3u8 LOCAL_VIDEO_DIR=sample-videos python web_yolo.py
 ```
 
-Open http://localhost:5000
 
+## Deploying on ZEDEDA Cloud
 
-## Endpoints
-- `/` – Main page with video and stats
-- `/video_feed` – MJPEG stream (multipart/x-mixed-replace)
-- `/stats` – JSON payload of live stats (per-class counts, confidences, fps, timestamps)
+`deploy/zededa_deploy.py` registers (and uplinks) the image, creates or updates the edge app and
+deploys an instance with the USB controller attached (defaults: hummingbird cluster,
+`sergey-cl260`, controller `USB1`). The token is read from `ZEDEDA_TOKEN`.
 
-
-## Docker Compose (optional)
-
-```yaml path=null start=null
-services:
-  ppe:
-    build: .
-    image: ppe-stream
-    ports:
-      - "5000:5000"
-    environment:
-      CAMERA_STREAM_URL: "http://your-device/playlist.m3u8"
-      MODEL_PATH: "bestn.pt"
-      PORT: 5000
-    # Mount a custom model if desired
-    # volumes:
-    #   - ./custom.pt:/app/custom.pt:ro
-```
-
-Start it with:
-
-```bash path=null start=null
-docker compose up --build
+```bash
+export ZEDEDA_TOKEN=...
+./deploy/zededa_deploy.py image && ./deploy/zededa_deploy.py app
+./deploy/zededa_deploy.py deploy
+./deploy/zededa_deploy.py status
 ```
 
 
 ## Troubleshooting
-- Stream doesn’t play:
-  - Verify the URL is reachable from inside the container: `docker exec -it <cid> ffprobe <url>`
-  - If it’s RTSP or another protocol, ensure the URL format and network reachability are correct.
-- Model not found:
-  - Check `MODEL_PATH` and any volume mount path you used.
-- High CPU:
-  - Running YOLO inference on CPU can be heavy. Consider smaller models or hardware acceleration.
-
-
-## Notes
-- Default model: `bestn.pt` (present in the repo/image by default). Override with `MODEL_PATH` as needed.
-- Accepted sources: anything OpenCV compiled with FFmpeg can read (HLS `.m3u8`, MP4, etc.).
+- USB camera shows "Not found": check the port is assigned to the app instance (the `status`
+  action prints the assignment), and that the camera enumerates on the node (`lsusb` in the EVE
+  debug shell).
+- Cloud stream shows "Offline" while the node is online: the node cannot reach `CAMERA_STREAM_URL`;
+  test it with `curl` from the same network.
+- Low FPS: check the CPU is not stuck at base clock (`cat /sys/devices/system/cpu/intel_pstate/no_turbo`
+  in the EVE debug shell; the CL260 ships with turbo off in the BIOS), that the OpenVINO model is
+  loaded (footer shows the model name), or lower `IMGSZ`.
 
 
 ## License
-This project contains third-party components (Ultralytics YOLO, OpenCV) under their respective licenses. Review their terms before production use.
+This project contains third-party components (Ultralytics YOLO, OpenCV, OpenVINO, libuvc) under
+their respective licenses. Review their terms before production use.
